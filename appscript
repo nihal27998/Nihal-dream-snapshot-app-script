@@ -1,0 +1,375 @@
+// ============================================================
+// 🔐 GEMINI API KEY
+// ============================================================
+const GEMINI_API_KEY = "AIzaSyAosWu5onGcySnw8xDo942H1ylQTayw-8M";
+
+// ============================================================
+// ✅ MENU
+// ============================================================
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu("🚀 AI Tools")
+    .addItem("Generate Dream Snapshot", "generateForActiveRow")
+    .addToUi();
+}
+
+// ============================================================
+// ✅ MAIN FUNCTION
+// ============================================================
+function generateForActiveRow() {
+  const sheet      = SpreadsheetApp.getActiveSheet();
+  const row        = sheet.getActiveCell().getRow();
+  const transcript = sheet.getRange(row, 8).getValue();  // Column H
+  const statusCell = sheet.getRange(row, 9);             // Column I
+  const outputCell = sheet.getRange(row, 10);            // Column J
+
+  if (row === 1) {
+    outputCell.setValue("⚠️ Please select a data row, not the header.");
+    return;
+  }
+
+  if (!transcript || transcript.toString().trim() === "") {
+    outputCell.setValue("❌ No transcript found in Column H for Row " + row);
+    statusCell.setValue("⚠️ Skipped");
+    return;
+  }
+
+  outputCell.setValue("⏳ Processing Row " + row + "...");
+  statusCell.setValue("⏳ Processing...");
+  SpreadsheetApp.flush();
+
+  try {
+    const trimmed = transcript.toString().trim().substring(0, 6000);
+
+    // STEP 1: Extract only business owner's statements
+    const ownerOnly = extractOwnerStatements(trimmed);
+
+    // STEP 2: Classify into 12 dimensions
+    const classificationJSON = classifyTranscript(ownerOnly);
+
+    // STEP 3: Generate full Dream Snapshot
+    const snapshot = generateSnapshot(classificationJSON, ownerOnly);
+
+    outputCell.setValue(snapshot || "⚠️ Empty response from Gemini");
+    statusCell.setValue("✅ Done");
+
+  } catch (err) {
+    outputCell.setValue("❌ ERROR:\n" + err.message);
+    statusCell.setValue("⚠️ Failed");
+    Logger.log("Error: " + err.message);
+  }
+}
+
+// ============================================================
+// ✅ STAGE 0: EXTRACT OWNER STATEMENTS
+// ============================================================
+function extractOwnerStatements(transcript) {
+  const prompt = `
+You are reading a sales or discovery call transcript between a BD person and a Business Owner.
+
+Your task:
+- Figure out who the Business Owner is. They talk about their business, their team, their challenges. They are NOT the one pitching or selling.
+- Copy out ONLY what the Business Owner said, word for word, in the order they said it.
+- Remove everything the BD person said.
+- Do NOT summarise or rephrase. Just give the owner's exact words as a numbered list.
+- If you cannot clearly tell who the owner is, include everything that is NOT a sales pitch.
+
+Transcript:
+${transcript}
+`;
+  return callGemini(prompt);
+}
+
+// ============================================================
+// ✅ STAGE 1: CLASSIFY INTO 12 DIMENSIONS
+// ============================================================
+function classifyTranscript(ownerStatements) {
+  const prompt = `
+You are a business coach reading what a Business Owner said on a discovery call.
+
+Your job is to fill in 12 specific dimensions about this owner. Each dimension has three parts:
+- "structured" — a fixed internal code. Copy it EXACTLY as written below. Never change it.
+- "verbal" — one simple sentence about what the owner said or implied. Write it like you're telling a friend. No jargon. No big words.
+- "display" — a short 3-5 word phrase describing THIS owner's situation in plain English. Write it like a newspaper headline, not a consulting label.
+
+STRICT RULES:
+1. Never change the "structured" values. They are fixed codes.
+2. Fill in every single dimension — even if the transcript is short.
+3. "verbal" must be plain. If a non-business person can't understand it in one read, rewrite it.
+4. "display" must sound like a real situation, not a framework name.
+5. Return ONLY valid JSON. No markdown. No extra text.
+
+BANNED WORDS — never use these in "verbal" or "display":
+execution, visibility, alignment, scalable, scalability, stakeholder, trait, metrics, KPIs, framework, dynamics, psyche, mechanism, operational, strategic, analytical, leverage, inefficiency, mapping, optimization, systematically, holistic, robust, actionable, implementation
+
+GOOD vs BAD EXAMPLES:
+BAD display: "Execution Visibility Gap"      GOOD display: "Can't see what team does"
+BAD display: "Trait-Activity Misalignment"   GOOD display: "Wrong people, wrong jobs"
+BAD display: "Depth-Oriented Decisions"      GOOD display: "Thinks before he decides"
+BAD display: "No Structured Tracking System" GOOD display: "Nothing is being measured"
+BAD display: "Potential Maximization Focus"  GOOD display: "Wants team at their best"
+BAD display: "Top-Down Alignment Model"      GOOD display: "Change starts from the top"
+BAD display: "Alignment-Led Growth"          GOOD display: "Fix first, then grow"
+BAD display: "Better Trait Mapping System"   GOOD display: "Put right people in right roles"
+BAD display: "Execution Inefficiency Risk"   GOOD display: "Things will keep slipping"
+BAD display: "Observational Learning"        GOOD display: "Learned by watching others"
+BAD display: "Strategic Analysis Phase"      GOOD display: "Still figuring it out"
+BAD display: "Passive Interest"              GOOD display: "Curious but not committed"
+
+Fixed structured codes:
+Q1  = Execution-Visibility-Gap
+Q2  = Trait-Activity-Misalignment
+Q3  = Depth-Oriented-Decision-Making
+Q4  = Lack-Of-Structured-Tracking
+Q5  = Potential-Maximization-Vision
+Q6  = Top-Down-Alignment-Model
+Q7  = Scalable-Execution-Through-Alignment
+Q8  = Improve-Trait-Evaluation-And-Mapping
+Q9  = Execution-Inefficiency-Risk
+Q10 = Learning-Through-Observation
+Q11 = Strategic-Improvement-Stage
+Q12 = Passive-Interest
+
+{
+  "Q1":  { "structured": "Execution-Visibility-Gap",             "verbal": "", "display": "" },
+  "Q2":  { "structured": "Trait-Activity-Misalignment",          "verbal": "", "display": "" },
+  "Q3":  { "structured": "Depth-Oriented-Decision-Making",       "verbal": "", "display": "" },
+  "Q4":  { "structured": "Lack-Of-Structured-Tracking",          "verbal": "", "display": "" },
+  "Q5":  { "structured": "Potential-Maximization-Vision",        "verbal": "", "display": "" },
+  "Q6":  { "structured": "Top-Down-Alignment-Model",             "verbal": "", "display": "" },
+  "Q7":  { "structured": "Scalable-Execution-Through-Alignment", "verbal": "", "display": "" },
+  "Q8":  { "structured": "Improve-Trait-Evaluation-And-Mapping", "verbal": "", "display": "" },
+  "Q9":  { "structured": "Execution-Inefficiency-Risk",          "verbal": "", "display": "" },
+  "Q10": { "structured": "Learning-Through-Observation",         "verbal": "", "display": "" },
+  "Q11": { "structured": "Strategic-Improvement-Stage",          "verbal": "", "display": "" },
+  "Q12": { "structured": "Passive-Interest",                     "verbal": "", "display": "" }
+}
+
+Business Owner's Statements:
+${ownerStatements}
+`;
+  return callGemini(prompt);
+}
+
+// ============================================================
+// ✅ STAGE 2: GENERATE FULL DREAM SNAPSHOT — PLAIN ENGLISH
+// ============================================================
+function generateSnapshot(classificationJSON, ownerStatements) {
+  const prompt = `
+You are writing a Dream Snapshot for a Business Owner based on what they said in a discovery call.
+
+This report will be READ BY THE BUSINESS OWNER. Write it like you are talking directly to them — simple, warm, honest. Like a trusted friend who knows business well.
+
+THE TEST: Read every sentence out loud in your head. If it sounds like a PowerPoint slide or a consulting report, rewrite it. It should sound like something a real person would say.
+
+=== BANNED WORDS ===
+Never use these words anywhere in the report — not even once:
+execution, visibility, alignment, scalable, scalability, stakeholder, trait, metrics, KPIs, framework, dynamics, psyche, mechanism, operational, strategic, analytical, leverage, inefficiency, mapping, optimization, systematically, holistic, robust, actionable, implementation, traction, inaction
+
+=== WRITING RULES ===
+1. Write using "you" and "your" throughout — talk directly to the owner.
+2. Use the Display labels from the classification in POINT A / B / WHY fields.
+3. No markdown — no **, no ##, no *. Use plain dashes (-) for lists.
+4. Do not skip any section. Do not leave any field blank.
+5. For Name: extract from transcript. If not found, write "Not mentioned."
+6. Write from start to finish without stopping.
+
+=== GOOD vs BAD WRITING EXAMPLES ===
+
+BAD: "Execution suffers due to lack of visibility and tracking mechanisms across levels."
+GOOD: "Right now, you have no real way to see what your team is doing day to day. You said yourself that people don't know what they're contributing — and that makes it very hard to know where things are going wrong."
+
+BAD: "Performance is inconsistent because individuals are not aligned with the right activities."
+GOOD: "Some people on your team are doing work that doesn't really suit them. That's why results feel unpredictable — it's not always about effort, it's about fit."
+
+BAD: "Decision-making is deeply analytical and rooted in understanding complexity."
+GOOD: "You don't rush into decisions. You like to fully understand a problem before you act — which is a good thing, as long as it doesn't slow you down."
+
+BAD: "Without fixing alignment and tracking: Teams operate inefficiently. Output remains inconsistent."
+GOOD: "If this doesn't get fixed: your team will keep working hard but producing uneven results, it'll be harder to know who's actually performing and who isn't, and growing the business will become more stressful, not less."
+
+BAD: "This is not a problem-aware and ready-to-buy lead. This is: Intellectually aware + Structurally weak + Action-delayed."
+GOOD: "You understand the problem well — probably better than most owners at this stage. But understanding it and fixing it are two different things, and right now you're still in the first step."
+
+=== FORMAT START ===
+
+DREAM SNAPSHOT
+Question | Structured | Verbal | Display
+Q1 | [Q1 structured] | [Q1 verbal] | [Q1 display]
+Q2 | [Q2 structured] | [Q2 verbal] | [Q2 display]
+Q3 | [Q3 structured] | [Q3 verbal] | [Q3 display]
+Q4 | [Q4 structured] | [Q4 verbal] | [Q4 display]
+Q5 | [Q5 structured] | [Q5 verbal] | [Q5 display]
+Q6 | [Q6 structured] | [Q6 verbal] | [Q6 display]
+Q7 | [Q7 structured] | [Q7 verbal] | [Q7 display]
+Q8 | [Q8 structured] | [Q8 verbal] | [Q8 display]
+Q9 | [Q9 structured] | [Q9 verbal] | [Q9 display]
+Q10 | [Q10 structured] | [Q10 verbal] | [Q10 display]
+Q11 | [Q11 structured] | [Q11 verbal] | [Q11 display]
+Q12 | [Q12 structured] | [Q12 verbal] | [Q12 display]
+
+SNAPSHOT
+[Q1 display] · [Q2 display] · [Q3 display] · [Q4 display] · [Q5 display] · [Q6 display] · [Q7 display] · [Q8 display] · [Q9 display] · [Q10 display] · [Q11 display] · [Q12 display]
+
+SHAREABLE SNAPSHOT
+Name: [Extract owner full name from transcript. If not found write: Not mentioned]
+Company: [Extract company name]
+Industry: [Extract or infer industry]
+
+POINT A
+Business Performance: [Q1 display]
+Team KPIs: [Q2 display]
+Decision Making: [Q3 display]
+Process Documentation: [Q4 display]
+
+POINT B
+Vision: [Q5 display]
+Operating Model: [Q6 display]
+Ambition Level: [Q7 display]
+
+WHY A → B
+Primary Driver: [Q8 display]
+Cost of Inaction: [Q9 display]
+
+WHY NOW
+Timing Trigger: [Q10 display]
+Timeline: [Q11 display]
+Readiness: [Q12 display]
+
+DETAILED SNAPSHOT
+
+Business Performance
+[2-3 sentences directly to the owner using "you" and "your". Describe what's happening in their business in plain words. Include a direct quote from the owner if available. Make it feel personal and specific — not generic.]
+
+Team KPIs
+[2-3 sentences directly to the owner. Describe the team performance situation simply. Include a quote if available. Avoid any jargon.]
+
+Decision Making
+[2-3 sentences directly to the owner. Describe how they think and decide, in plain everyday words. Include a quote if available.]
+
+Process Documentation
+[2-3 sentences directly to the owner. Describe what's missing or not working, in plain terms. Include a quote if available.]
+
+Vision
+[2-3 sentences directly to the owner. Describe what they want to achieve — in simple, human language. Include a quote if available.]
+
+Operating Model
+[2-3 sentences directly to the owner. Describe how they want the business to run. Keep it simple and grounded.]
+
+Ambition Level
+[2-3 sentences directly to the owner. Describe their growth goal in realistic, plain words.]
+
+Primary Driver
+[2-3 sentences directly to the owner. Describe the single most important thing that needs to change, in plain English.]
+
+Cost of Inaction
+If you don't fix [core problem 1 in simple plain words] and [core problem 2 in simple plain words]:
+- [specific consequence 1 — written simply and specifically for this owner]
+- [specific consequence 2 — written simply and specifically for this owner]
+- [specific consequence 3 — written simply and specifically for this owner]
+The longer this stays as is, the harder it will be to [specific outcome this owner cares about, in plain words].
+
+Timing Trigger
+[2-3 sentences directly to the owner. Describe what brought them to this conversation, in plain terms. Include a quote if available.]
+
+Timeline
+[1-2 sentences directly to the owner. Be clear about where they stand — still thinking, starting to plan, or ready to move.]
+
+Readiness
+[1-2 sentences directly to the owner. Be honest about how ready they are to act.]
+
+Blunt Insight (What this actually means for you)
+[One clear sentence summing up where this owner stands — written like a trusted friend, not a consultant.]
+
+Here's what we're seeing:
+- [honest observation 1 — plain and direct, e.g. "You understand the problem well but haven't started fixing it yet"]
+- [honest observation 2 — specific to this owner, no jargon]
+- [honest observation 3 — specific to this owner, no jargon]
+
+If you don't:
+- [specific action 1 — simple and clear]
+- [specific action 2 — simple and clear]
+- [specific action 3 — simple and clear]
+
+This will stay a "[simple plain-words label for the stuck situation — e.g. 'good conversation, no deal']" lead.
+
+=== FORMAT END ===
+
+Now write the full Dream Snapshot. Do not stop until Blunt Insight is fully written.
+
+Classification Data:
+${classificationJSON}
+
+Business Owner's Statements:
+${ownerStatements}
+`;
+  return callGemini(prompt);
+}
+
+// ============================================================
+// ✅ GEMINI API CALL
+// ============================================================
+function callGemini(prompt) {
+  const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + GEMINI_API_KEY;
+
+  const payload = {
+    contents: [
+      {
+        parts: [{ text: prompt }]
+      }
+    ],
+    generationConfig: {
+      temperature: 0.3,
+      topP: 0.95,
+      topK: 40,
+      maxOutputTokens: 8192
+    },
+    safetySettings: [
+      { category: "HARM_CATEGORY_HARASSMENT",        threshold: "BLOCK_NONE" },
+      { category: "HARM_CATEGORY_HATE_SPEECH",       threshold: "BLOCK_NONE" },
+      { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+      { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+    ]
+  };
+
+  const options = {
+    method: "post",
+    contentType: "application/json",
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  };
+
+  const response     = UrlFetchApp.fetch(url, options);
+  const responseText = response.getContentText();
+  const responseCode = response.getResponseCode();
+
+  if (responseCode !== 200) {
+    throw new Error("HTTP " + responseCode + " from Gemini API:\n" + responseText);
+  }
+
+  let json;
+  try {
+    json = JSON.parse(responseText);
+  } catch (e) {
+    throw new Error("Failed to parse Gemini response:\n" + responseText);
+  }
+
+  if (json.error) {
+    throw new Error("Gemini API Error: " + json.error.message);
+  }
+
+  if (!json.candidates || json.candidates.length === 0) {
+    throw new Error("No candidates returned by Gemini:\n" + responseText);
+  }
+
+  if (json.candidates[0].finishReason === "SAFETY") {
+    throw new Error("Gemini blocked this content due to safety filters.");
+  }
+
+  const parts = json.candidates[0].content && json.candidates[0].content.parts;
+  if (!parts || parts.length === 0 || !parts[0].text) {
+    throw new Error("Gemini returned empty content:\n" + responseText);
+  }
+
+  return parts[0].text.trim();
+}
